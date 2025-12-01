@@ -16,5 +16,10 @@ namespace DataLoader.Repositories
         {
             var result = await _client.Post<PaymentToken, PaymentToken>($"/api/v1/PaymentTokens", token);
         }
+
+        public async Task<PaymentToken[]> GetToken(string customerId)
+        {
+            return await _client.Get<PaymentToken[]>($"/api/v1/customers/{customerId}/PaymentTokens");
+        }
     }
 }

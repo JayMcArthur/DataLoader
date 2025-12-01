@@ -16,19 +16,19 @@ namespace DataLoader.Repositories
             _client = client;
         }
 
-        public async Task<string> CreateCustomer(string? nodeId, string uplineId, int? customerType, DateTime date)
+        public async Task<Customer> CreateCustomer(string? nodeId, string uplineId, int? customerType, DateTime date)
         {
-            var customer = Customers.GetRandomCustomer().ToCustomer(nodeId, date);
+            var customer = Customers.GetRandomCustomer(null).ToCustomer(nodeId, date);
             customer.CustomerType = customerType;
             return await CreateCustomer(customer, uplineId);
         }
 
-        public async Task<string> CreateCustomer(Customer customer, string uplineId)
+        public async Task<Customer> CreateCustomer(Customer customer, string uplineId)
         {
             var result = await _client.Post<Customer, Customer>("/api/v1/Customers", customer);
             await _client.Post<Placement, Placement>("/api/v1/Placements", new Placement { NodeId = result.nId, UplineId = uplineId, Date = customer.SignupDate.HasValue ? customer.SignupDate.Value : DateTime.UtcNow });
 
-            return result.Id;
+            return result;
         }
 
         public async Task<Customer> SaveCustomer(Customer customer)
@@ -53,7 +53,7 @@ namespace DataLoader.Repositories
             string customerCountString = await _client.GetHeaderValue("/api/v1/Customers?offset=0&count=1", "Total");
 
             List<Customer> customers = new List<Customer>();
-            int batchSize = 100;
+            int batchSize = 500;
             int offset = 0;
             int.TryParse(customerCountString, out int customerCount);
 

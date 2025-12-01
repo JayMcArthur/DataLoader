@@ -16,5 +16,15 @@ namespace DataLoader.Repositories
         {
             var result = await _client.Put<Order, Order>($"/api/v1/Orders/{order.Id}", order);
         }
+
+        public async Task PostNewOrder(Order order)
+        {
+            var result = await _client.Post<Order, Order>($"/api/v1/Orders", order);
+        }
+
+        public async Task<Order> GetOrder(string orderNumber)
+        {
+            return await _client.Get<Order>($"/api/v1/Orders/{orderNumber}");
+        }
     }
 }

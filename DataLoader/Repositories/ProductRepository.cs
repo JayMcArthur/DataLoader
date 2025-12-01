@@ -19,7 +19,20 @@ namespace DataLoader.Repositories
 
         public async Task<Product[]> GetAllProducts()
         {
-            return await _client.Get<Product[]>($"/api/v1/Products?offset=1&count=600");
+            var results = new List<Product>();
+            var count = 600;
+            var offset = 0;
+            var hasItems = true;
+
+            while (hasItems)
+            {
+                var pageItems = await _client.Get<Product[]>($"/api/v1/Products?offset={offset}&count={count}");
+                hasItems = pageItems.Length > 0;
+                results.AddRange(pageItems);
+                offset += count;
+            }
+
+            return results.ToArray();
         }
 
 

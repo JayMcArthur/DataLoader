@@ -1,5 +1,4 @@
 ﻿using DataLoader.Repositories;
-using DataLoader.Repositories.Models;
 using System.Globalization;
 
 namespace DataLoader.Services.Import
@@ -7,12 +6,14 @@ namespace DataLoader.Services.Import
     internal class AutoshipImporter
     {
         private readonly AutoshipRepository _repository;
+        private readonly PaymentTokenRepository _paymentRepository;
         private readonly CSVFileReader _csvFileReader;
 
-        public AutoshipImporter(CSVFileReader sVFileReader, AutoshipRepository repository)
+        public AutoshipImporter(CSVFileReader sVFileReader, AutoshipRepository repository, PaymentTokenRepository paymentTokenRepository)
         {
             _repository = repository;
             _csvFileReader = sVFileReader;
+            _paymentRepository = paymentTokenRepository;
         }
 
         public async Task ImportAutoships(string orderFile, string lineItemFile)
@@ -21,90 +22,59 @@ namespace DataLoader.Services.Import
             var dateFormat = "M/d/yyyy H:mm";
 
             await Task.CompletedTask;
-            var autoshipRows = _csvFileReader.ReadCsvFile(orderFile);
+            //var autoshipRows = _csvFileReader.ReadCsvFile(orderFile);
             var lineItemRows = _csvFileReader.ReadCsvFile(lineItemFile);
 
-            var lineItems = lineItemRows.Select(x =>
+            foreach( var row in lineItemRows )
             {
-                decimal.TryParse(x["quantity"], out decimal quantity);
+                var customerId = row["customerid"];
+                var paymentMerchantID = row["PaymentMerchantID"];
+                var pextProcessDate = row["NextProcessDate"];
 
-                return new AutoshipLineItem
+                //var tokens = await _paymentRepository.GetToken(customerId);
+                //var matchingToken = tokens.FirstOrDefault(x => x.Last4CC == last4);
+
+                //if (matchingToken != null)
+                //{
+                    var autoships = await _repository.GetAutoships(customerId);
+
+                if (autoships.Count() > 1)
                 {
-                    AutoshipId = x["autoshipId"],
-                    ItemId = x["itemId"],
-                    Quantity = quantity,
-
-                };
-            }).GroupBy(x => x.AutoshipId).ToDictionary(x => x.Key, y => y.ToArray());
-
-            var autoships = autoshipRows.Select(x =>
-            {
-                var autoshipId = x["id"];
-                var startDate = ReadDate(x["startDate"], dateFormat, timeZoneId);
-
-                if (!Enum.TryParse(x["frequency"], true, out Frequency frequency))
-                {
-                    frequency = Frequency.Monthly;
+                    int rr = 0;
                 }
 
-                //lastAutoshipDate
-                //nextAutoshipDate
-
-                lineItems.TryGetValue(autoshipId, out AutoshipLineItem[]? items);
-                if (!startDate.HasValue) throw new ArgumentNullException(nameof(startDate));
-
-                return new Autoship
+                foreach (var autoship in autoships)
                 {
-                    Id = autoshipId,
-                    CustomerId = x["customerId"],
-                    StartDate = startDate.Value,
-                    Frequency = frequency,
-                    AutoshipType = x["autoshipType"],
-                    ShippingMethod = x["shippingMethod"],
-                    PaymentMethod = x["paymentMethod"],
-                    Status = x["status"],
 
-                    Address = new ShipAddress
+
+                    if (autoship.CustomData != "{\"MerchantId\":5,\"CurrencyCode\":\"USD\"}")
                     {
-                        Line1 = x["line1"],
-                        Line2 = x["line2"],
-                        City = x["city"],
-                        StateCode = x["stateCode"],
-                        Zip = x["zip"],
-                        CountryCode = x["countryCode"],
-                    },
-
-                    LineItems = items != null ? items : Array.Empty<AutoshipLineItem>(),
-                };
-            }).ToArray();
-
-            List<object> ErrorList = new List<object>();
-
-            //await Parallel.ForEachAsync(autoships, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, async (autoship, cancellationToken) =>
-            foreach(var autoship in autoships)
-            {
-                try
-                {
-                    await _repository.InsertAutoship(autoship);
-                    Console.WriteLine($"Imported {autoship.Id} {autoship.CustomerId}");
-                }
-                catch (Exception ex)
-                {
-                    lock (ErrorList) // Ensure thread safety when modifying the shared list
-                    {
-                        ErrorList.Add(new { msg = ex.Message, autoship = autoship });
+                        int rr = 0;
                     }
+                    else
+                    {
+                        if (autoship.Frequency == Repositories.Models.Frequency.Yearly)
+                        {
+                            autoship.CustomData = "\"{\\\"MerchantId\\\":9012,\\\"CurrencyCode\\\":\\\"USD\\\"}\"";
+                            try
+                            {
+                                await _repository.PatchAutoShipPaymentMethod(customerId, autoship.Id, autoship.CustomData);
+                            }
+                            catch (Exception ex)
+                            {
+                                int rr = 0;
+                            }
+                        }
+                    }
+
+
+                    //        if (autoship.PaymentMethod != matchingToken.Id)
+                    //        {
+                    //            autoship.PaymentMethod = matchingToken.Id;
+                    //            await _repository.PatchAutoShipPaymentMethod(customerId, autoship.Id, matchingToken.Id);
+                    //        }
                 }
             }
-
-
-            string aa = string.Empty;
-            foreach (var item in ErrorList)
-            {
-                aa += "\r\n" + item;
-            }
-
-            Console.WriteLine($"Imported {autoships.Length} rows");
         }
 
         private DateTime? ReadDate(string date, string dateFormat, string timeZoneId)

@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+﻿using System.Diagnostics.CodeAnalysis;
 
 namespace DataLoader.Http
 {
@@ -9,6 +9,10 @@ namespace DataLoader.Http
 
         Task<T> Post<T, R>(string url, R query);
         Task<T> Put<T, R>(string url, R query);
+        Task<T> Patch<T>(string url, object query);
         Task<bool> Delete(string url);
+
+        Task<HttpResponseMessage> PutAsync([StringSyntax("Uri")] string? requestUri, HttpContent? content);
+        Task<HttpResponseMessage> GetAsync([StringSyntax("Uri")] string? requestUri);
     }
 }

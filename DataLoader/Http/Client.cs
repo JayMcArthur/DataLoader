@@ -1,4 +1,6 @@
 ﻿using DataLoader.Repositories.Models;
+using System.Diagnostics.CodeAnalysis;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 
 namespace DataLoader.Http
@@ -121,6 +123,25 @@ namespace DataLoader.Http
             await ProcessResult<string>(result);
 
             return true;
+        }
+
+        public async Task<T> Patch<T>(string url, object value)
+        {
+            var content = JsonContent.Create(value, mediaType: new MediaTypeHeaderValue("application/json-patch+json"));
+            var request = new HttpRequestMessage(new HttpMethod("PATCH"), _rootUrl + url) { Content = content };
+            var result = await client.SendAsync(request);
+
+            return await ProcessResult<T>(result);
+        }
+
+        public async Task<HttpResponseMessage> PutAsync([StringSyntax("Uri")] string? requestUri, HttpContent? content)
+        {
+            return await client.PutAsync(_rootUrl + requestUri, content);
+        }
+
+        public async Task<HttpResponseMessage> GetAsync([StringSyntax("Uri")] string? requestUri)
+        {
+            return await client.GetAsync(requestUri);
         }
     }
 }

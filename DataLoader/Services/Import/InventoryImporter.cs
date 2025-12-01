@@ -1,6 +1,7 @@
 ﻿using DataLoader.Repositories;
 using DataLoader.Repositories.Models;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace DataLoader.Services.Import
@@ -18,49 +19,57 @@ namespace DataLoader.Services.Import
 
         public async Task ImportInventory(string productFile, string priceFile)
         {
-            var productIds = await ImportProducts(productFile);
-            await ImportPrices(productIds, priceFile);
-        }
-
-        public static List<string> ParseFile(string filePath)
-        {
-            var result = new List<string>();
-            var buffer = new StringBuilder(); // Buffer to handle multi-line values
-            string? line;
-
-            using (var reader = new StreamReader(filePath))
+            try
             {
-                while ((line = reader.ReadLine()) != null)
-                {
-                    buffer.AppendLine(line);
-
-                    // Check if the line contains the separator '|', meaning it's a full record
-                    if (line.Contains("|"))
-                    {
-                        var fullLine = buffer.ToString().TrimEnd(); // Get the accumulated content
-                        var values = fullLine.Split('|'); // Split by '|'
-                        result.Add(values.First());
-                        buffer.Clear(); // Reset buffer for the next record
-                    }
-                }
-
-                // Handle any remaining buffer content
-                if (buffer.Length > 0)
-                {
-                    var values = buffer.ToString().TrimEnd().Split('|');
-                    result.Add(values.First());
-                }
+                var productIds = await ImportProducts(productFile);
+                await ImportPrices(productIds, priceFile);
             }
-
-            return result;
+            catch (Exception ex)
+            {
+                throw;
+            }
         }
 
-        public async Task<string[]> ImportProducts(string productFile)
+        //public static List<string> ParseFile(string filePath)
+        //{
+        //    var result = new List<string>();
+        //    var buffer = new StringBuilder(); // Buffer to handle multi-line values
+        //    string? line;
+
+        //    using (var reader = new StreamReader(filePath))
+        //    {
+        //        while ((line = reader.ReadLine()) != null)
+        //        {
+        //            buffer.AppendLine(line);
+
+        //            // Check if the line contains the separator '|', meaning it's a full record
+        //            if (line.Contains("|"))
+        //            {
+        //                var fullLine = buffer.ToString().TrimEnd(); // Get the accumulated content
+        //                var values = fullLine.Split('|'); // Split by '|'
+        //                result.Add(values.First());
+        //                buffer.Clear(); // Reset buffer for the next record
+        //            }
+        //        }
+
+        //        // Handle any remaining buffer content
+        //        if (buffer.Length > 0)
+        //        {
+        //            var values = buffer.ToString().TrimEnd().Split('|');
+        //            result.Add(values.First());
+        //        }
+        //    }
+
+        //    return result;
+        //}
+
+        public async Task<ProductMaps> ImportProducts(string productFile)
         {
             await Task.CompletedTask;
-            var descriptionRows = ParseFile(@"C:\Users\leona\Downloads\Common Sense Inventory Product Descriptions Only (2-20-25).csv");
-            var productRows = _csvFileReader.ReadCsvFile(@"C:\Users\leona\Downloads\Common Sense Inventory Products No Description (2-12-25).csv");
-
+            var descriptionRows = _csvFileReader.ReadCsvFile(@"C:\Users\leona\Downloads\CS\CS - Inventory Product Descriptions Only (4-9-25).csv");
+            var productRows = _csvFileReader.ReadCsvFile(@"C:\Users\leona\Downloads\CS\CS - Inventory Products No Descriptions (4-9-25).csv");
+            var imageRows = _csvFileReader.ReadCsvFile(@"C:\Users\leona\Downloads\CS\CS - Inventory Images (4-9-25).csv");
+            var skuMapRows = _csvFileReader.ReadCsvFile(@"C:\Users\leona\Downloads\CS\CS - ItemId to SKU Mapping (4-9-25).csv");
 
             var products = productRows.Select(x =>
             {
@@ -88,65 +97,84 @@ namespace DataLoader.Services.Import
                 };
             }).ToArray();
 
-            var descriptions = descriptionRows.Select(x =>
+            var images = imageRows.Select(x =>
             {
-                var comma = x.IndexOf(',');
-                var id = x.Substring(0, comma);
-                var desc = x.Substring(comma + 1).Trim().Trim(',').Trim('"');
-
                 return new Product
                 {
-                    Id = id,
-                    Description = desc
+                    Id = x["ItemID"],
+                    ImageUrl = x["ImagePath"],
+                };
+            }).Where(x => !string.IsNullOrWhiteSpace(x.ImageUrl)).DistinctBy(x => x.Id).ToDictionary(x => x.Id, y => y);
+
+            var descriptions = descriptionRows.Select(x =>
+            {
+                return new Product
+                {
+                    Id = x["itemId"],
+                    Description = x["description"],
                 };
             }).ToDictionary(x => x.Id, y => y);
 
             foreach (var product in products)
             {
+                if (string.IsNullOrWhiteSpace(product.ImageUrl))
+                {
+                    if (images.TryGetValue(product.Id, out var imageRow))
+                    {
+                        product.ImageUrl = imageRow.ImageUrl;
+                    }
+                }
+
                 if (descriptions.TryGetValue(product.Id, out var descriptionRow))
                 {
                     product.Description = descriptionRow.Description;
                 }
             }
 
-            products = products.GroupBy(x => x.Name).SelectMany(g =>
+            var idMappings = new Dictionary<string, string>();
+            products = products.GroupBy(x => new { x.Name, x.ImageUrl }).OrderByDescending(x => x.Key.ImageUrl).Select(g =>
             {
-                List<Product> items = new List<Product>();
-
-                foreach(var group in g.GroupBy(t => t.ImageUrl).OrderByDescending(x => x.Key))
+                var item = g.First();
+                foreach (var p in g)
                 {
-                    var item = group.First();
-                    if (string.IsNullOrEmpty(item.ImageUrl))
-                    {
-                        if (items.Count() == 0) items.Add(item);
-                    }
-                    else
-                    {
-                        items.Add(item);
-                    }
+                    idMappings[p.Id] = item.Id;
                 }
 
-                return items;
+                return item;
             }).ToArray();
 
             List<object> ErrorList = new List<object>();
             List<string> results = new List<string>();
 
-            
+            var skuMap = skuMapRows.Select(x =>
+            {
+                return new Product
+                {
+                    Id = x["ItemId"],
+                    HSCode = x["SKU"],
+                };
+            }).ToDictionary(x => x.Id, y => y.HSCode);
 
             foreach (var product in products)
             {
-                try
-                {
-                    await _productRepository.InsertProduct(product);
-                    Console.WriteLine($"Imported {product.Id}");
-                    results.Add(product.Id);
-                }
-                catch (Exception ex)
-                {
-                    ErrorList.Add(new { msg = ex.Message, product = product });
-                }
+                idMappings.TryGetValue(product.Id, out string? rootId);
+                skuMap.TryGetValue(rootId ?? product.Id, out string? sku);
+                product.Id = sku ?? product.Id;
             }
+
+            //foreach (var product in products)
+            //{
+            //    try
+            //    {
+            //        await _productRepository.InsertProduct(product);
+            //        Console.WriteLine($"Imported {product.Id}");
+            //        results.Add(product.Id);
+            //    }
+            //    catch (Exception ex)
+            //    {
+            //        ErrorList.Add(new { msg = ex.Message, product = product });
+            //    }
+            //}
 
             string aa = string.Empty;
             foreach (var item in ErrorList)
@@ -155,17 +183,20 @@ namespace DataLoader.Services.Import
             }
 
             Console.WriteLine($"Imported {products.Length} rows");
-            return results.ToArray();
+            return new ProductMaps(results, skuMap, idMappings);
         }
 
-        public async Task ImportPrices(string[] productIds, string priceFile)
+        public async Task ImportPrices(ProductMaps maps, string priceFile)
         {
             var timeZoneId = "Mountain Standard Time";
             var dateFormat = "M/d/yyyy H:mm";
 
+            var skuMap = maps.SkuMaps;
+            var idMappings = maps.IdMappings;
+
             await Task.CompletedTask;
-            var priceRows = _csvFileReader.ReadCsvFile(@"C:\Users\leona\Downloads\Common Sense Inventory Prices (2-12-25).csv");
-            var idHash = productIds.ToHashSet();
+            var priceRows = _csvFileReader.ReadCsvFile(@"C:\Users\leona\Downloads\CS\CS - Inventory Prices (4-9-25).csv");
+            var idHash = maps.ProductSkus.ToHashSet();
 
             var prices = priceRows.Select(x =>
             {
@@ -219,6 +250,9 @@ namespace DataLoader.Services.Import
             {
                 try
                 {
+                    skuMap.TryGetValue(price.ProductId, out var productSku);
+                    price.ProductId = productSku ?? price.ProductId;
+
                     if (idHash.Contains(price.ProductId))
                     {
                         await _productRepository.InsertPrice(price);
@@ -263,5 +297,19 @@ namespace DataLoader.Services.Import
                 throw new Exception("Failed to parse order date.");
             }
         }
+    }
+
+    internal class ProductMaps
+    {
+        public ProductMaps(List<string> productIds, Dictionary<string, string?> skuMaps, Dictionary<string, string> idMappings)
+        {
+            ProductSkus = productIds;
+            SkuMaps = skuMaps;
+            IdMappings = idMappings;
+        }
+
+        public List<string> ProductSkus { get; }
+        public Dictionary<string, string?> SkuMaps { get; }
+        public Dictionary<string, string> IdMappings { get; }
     }
 }

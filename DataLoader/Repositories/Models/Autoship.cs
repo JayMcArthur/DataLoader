@@ -13,6 +13,7 @@
         public DateTime? LastAutoshipDate { get; set; }
         public DateTime? NextAutoshipDate { get; set; }
         public ShipAddress Address { get; set; } = new ShipAddress();
+        public string CustomData { get; set; } = string.Empty;
         public AutoshipLineItem[] LineItems { get; set; } = Array.Empty<AutoshipLineItem>();
     }
 

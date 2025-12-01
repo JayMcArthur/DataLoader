@@ -1,8 +1,11 @@
 ﻿using DataLoader.Http;
+using DataLoader.Repositories;
 using DataLoader.Repositories.Models;
 using DataLoader.Services;
 using DataLoader.Services.Import;
 using Microsoft.Extensions.DependencyInjection;
+using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Web;
 
 namespace DataLoader
@@ -37,20 +40,47 @@ namespace DataLoader
                     var customerService = serviceProvider.GetRequiredService<CustomerService>();
                     await GenerateCustomers(customerService);
                 }
+                else if (input == "m")
+                {
+                    var customerService = serviceProvider.GetRequiredService<CustomerService>();
+                    await GenerateModel(customerService);
+                }
                 else if (input == "v")
                 {
                     var volumeService = serviceProvider.GetRequiredService<VolumeService>();
                     await CreateVolumes(volumeService);
+                }
+                else if (input == "o")
+                {
+                    var orderService = serviceProvider.GetRequiredService<OrderService>();
+                    await CreateOrders(orderService);
                 }
                 else if (input == "i")
                 {
                     var importer = serviceProvider.GetRequiredService<ImportManager>();
                     await importer.BeginImport();
                 }
+                else if (input == "u")
+                {
+                    var productRepository = serviceProvider.GetRequiredService<ProductRepository>();
+                    var products = await productRepository.GetAllProducts();
+
+                    //var imageUrls = products.Select(x => x.ImageUrl ?? string.Empty).Distinct().Where(x => x.Contains('\t')).ToList();
+                    var imageUrls = new List<string>(new[] { "https://commonsense.corpadmin.directscale.com/CMS/Images/Inventory/0ABE80C4-47CF-462B-A807-2EC5BEB849F1.jpeg" });
+
+                    var uploader = serviceProvider.GetRequiredService<ImageUploader>();
+                    await uploader.UploadImagesAsync(
+                        imageUrls: imageUrls,
+                        apiUrl: "/api/v1/Blobs",
+                        category: "inventory"
+                    );
+                }
                 else if (input == "help")
                 {
-                    Console.WriteLine("'(C)ustomers' - Generate test Customers.");
+                    Console.WriteLine("(C)ustomers - Generate test Customers.");
                     Console.WriteLine("(V)olume - Generate volume for existing customers");
+                    Console.WriteLine("(M)odel - Generate Model data for compensation plan modeling");
+                    Console.WriteLine("(O)rders - Generate test Orders.");
                     Console.WriteLine("(I)mport Data - Import data from a CSV file.");
                     Console.WriteLine("exit - Exit Pillars Data Loader.");
                 }
@@ -89,8 +119,99 @@ namespace DataLoader
             return pass;
         }
 
+        private static Distribution[]? BuildDistribution(string? distributionInput)
+        {
+            if (string.IsNullOrWhiteSpace(distributionInput)) return null;
+            
+            var results  = new List<Distribution>();
+            foreach (var part in distributionInput.Split(","))
+            {
+                if (!part.Contains(":")) return null;
+
+                var colPos = part.IndexOf(":");
+                var first = part.Substring(0, colPos);
+                var second = part.Substring(colPos + 1);
+
+                int.TryParse(first.Replace("%", ""), out var percent);
+                int.TryParse(second, out var amount);
+
+                if (percent == 0) return null;
+                if (amount == 0) return null;
+
+                results.Add(new Distribution
+                {
+                    Percent = percent,
+                    Amount = amount
+                });
+            }
+
+            if (results.Sum(d => d.Percent) != 100) return null;
+
+            return results.Count > 0 ? results.ToArray() : null;
+        }
+
+        private static async Task GenerateModel(CustomerService customerService)
+        {
+            Console.WriteLine("How many customers would you like to generate?");
+            Console.Write("> ");
+            var count = ReadInt();
+
+            Console.WriteLine("Please enter the BEGIN date");
+            Console.Write("> ");
+            var beginDate = ReadDate(DateTime.UtcNow);
+
+            Console.WriteLine("Please enter the END date");
+            Console.Write("> ");
+            var endDate = ReadDate(DateTime.UtcNow);
+
+            Console.WriteLine("What is the customer type percentages would you like to generate?");
+            Distribution[]? customerTypeDistribution = null;
+            do
+            {
+                Console.WriteLine("Enter percent:Type, percent:Type  Example: (50%:1,50%:2)");
+                Console.Write("> ");
+                var custTypeDistInput = Console.ReadLine();
+                customerTypeDistribution = BuildDistribution(custTypeDistInput);
+            } while (customerTypeDistribution == null);
+
+
+            Console.WriteLine("How many orders per customers would you like to generate?");
+            Console.Write("> ");
+            var numberOfOrders = ReadInt();
+            var orders = new List<(DateTime Begin, DateTime End, Distribution[] Distributions)>();
+
+            for (int i = 0; i < numberOfOrders; i++)
+            {
+
+                Console.WriteLine("Please enter the BEGIN date (Press Enter to use customer date)");
+                Console.Write("> ");
+                var oBeginDate = ReadDate(beginDate);
+
+                Console.WriteLine("Please enter the END date (Press Enter to use customer date)");
+                Console.Write("> ");
+                var oEndDate = ReadDate(endDate);
+
+                Console.WriteLine("What is the volume percentages would you like to generate?");
+                Distribution[]? volumeDistribution = null;
+                do
+                {
+                    Console.WriteLine("Enter percent:volumeAmount,percent:volumeAmount  Example: (50%:100,50%:200)");
+                    Console.Write("> ");
+                    var volumeDistInput = Console.ReadLine();
+                    volumeDistribution = BuildDistribution(volumeDistInput);
+                } while (volumeDistribution == null);
+
+                orders.Add((oBeginDate, oEndDate, volumeDistribution));
+            }
+
+            await customerService.CreateModel(count, beginDate, endDate, customerTypeDistribution, orders.ToArray());
+        }
+
+
         private static async Task GenerateCustomers(CustomerService customerService)
         {
+            var customerIds = new ConcurrentDictionary<string, Customer>();
+
             Console.WriteLine("How many customers would you like to generate?");
             Console.Write("> ");
             var count = ReadInt();
@@ -99,7 +220,8 @@ namespace DataLoader
             var customerType = ReadInt();
             Console.WriteLine("What period would you like to generate volume for? (Press Enter for current period)");
             Console.Write("> ");
-            var date = ReadDate();
+            var date = ReadDate(DateTime.UtcNow);
+
             Console.WriteLine($"Do you wish to assign a sponsor (y/n)");
             Console.Write("> ");
             var useSponsor = Console.ReadLine() ?? string.Empty;
@@ -107,16 +229,52 @@ namespace DataLoader
             {
                 Console.WriteLine("Enter upline Id");
                 var uplineId = Console.ReadLine();
-                await customerService.CreateCustomers(count, customerType, uplineId, date);
+
+                Console.WriteLine("Would you like to stack the new customers under each new one created (y/n)");
+                var stack = Console.ReadLine()?.ToLower() == "y";
+
+                await customerService.CreateCustomers(count, customerType, uplineId, stack, date, null, customerIds);
+            }
+            else if (count > 0)
+            {
+                await customerService.CreateCustomers(count, customerType, null, false, date, null, customerIds);
+            }
+        }
+
+        private static async Task CreateOrders(OrderService orderService)
+        {
+            Console.WriteLine("How many orders would you like to generate?");
+            Console.Write("> ");
+            var count = ReadInt();
+            Console.WriteLine("What period would you like to generate volume for? (Press Enter for current period)");
+            Console.Write("> ");
+            var date = ReadDate(DateTime.UtcNow);
+            Console.WriteLine($"Do you wish to assign a customer Id (y/n)");
+            Console.Write("> ");
+            var useSponsor = Console.ReadLine() ?? string.Empty;
+            if (useSponsor.ToLower() == "y")
+            {
+                Console.WriteLine("Enter customerId Id");
+                var customerId = Console.ReadLine();
+                await orderService.CreateOrders(count, customerId, date);
             }
             else if (count > 1)
             {
-                await customerService.CreateCustomers(count, customerType, null, date);
+                await orderService.CreateOrders(count, null, date);
             }
         }
 
         private static async Task CreateVolumes(VolumeService volumeService)
         {
+            var sourceGroups = await volumeService.GetSourceGroupVolume();
+            foreach(var sg in sourceGroups)
+            {
+                Console.WriteLine($"{sg.Id} - {sg.SourceType}");
+            }
+            Console.WriteLine("What volume would you like to generate? (You can select multple by seperating with a comma)");
+            Console.Write("> ");
+            var volumeKeys = Console.ReadLine()?.Split(",") ?? [];
+
             Console.WriteLine("How many customers would you like to generate volume for?");
             Console.Write("> ");
             var count = ReadInt();
@@ -132,15 +290,15 @@ namespace DataLoader
             var volumeAmount = ReadInt();
             Console.WriteLine("What period would you like to generate volume for? (Press Enter for current period)");
             Console.Write("> ");
-            var date = ReadDate();
+            var date = ReadDate(DateTime.UtcNow);
 
             if (string.IsNullOrWhiteSpace(customerId))
             {
-                await volumeService.CreateVolumes(count, volumeAmount, date);
+                await volumeService.CreateVolumes(count, volumeKeys, volumeAmount, date);
             }
             else
             {
-                await volumeService.CreateVolume(customerId, volumeAmount, date);
+                await volumeService.CreateVolume(customerId, volumeKeys, volumeAmount, date);
             }
         }
 
@@ -243,12 +401,12 @@ namespace DataLoader
             }
         }
 
-        private static DateTime ReadDate()
+        private static DateTime ReadDate(DateTime defDate)
         {
             while (true)
             {
                 var input = Console.ReadLine();
-                if (string.IsNullOrWhiteSpace(input)) input = DateTime.Now.ToShortDateString();
+                if (string.IsNullOrWhiteSpace(input)) input = defDate.ToShortDateString();
                 if (DateTime.TryParse(input, out DateTime outVal))
                 {
                     return DateTime.SpecifyKind(outVal, DateTimeKind.Utc);

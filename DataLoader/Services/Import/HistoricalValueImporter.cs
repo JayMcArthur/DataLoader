@@ -21,18 +21,28 @@ namespace DataLoader.Services.Import
 
             foreach (var row in data)
             {
-                long.TryParse(row["periodId"], out long periodId);
-                decimal.TryParse(row["Value"], out decimal value);
+                var periodId = 45465;
+                var nodeId = row["NodeID"];
+                decimal.TryParse(row["CurrentRank"], out decimal rank);
+                decimal.TryParse(row["HighRank"], out decimal highRank);
 
                 await _historicalValueRepository.InsertValue(new Repositories.Models.HistoricalValue
                 {
-                    Key = row["DataPoint"],
-                    NodeId = row["nodeId"],
+                    Key = "Rank",
+                    NodeId = nodeId,
                     PeriodId = periodId,
-                    sumValue = value
+                    sumValue = rank
                 });
 
-                Console.WriteLine($"Imported {row["nodeId"]}");
+                await _historicalValueRepository.InsertValue(new Repositories.Models.HistoricalValue
+                {
+                    Key = "HighRank",
+                    NodeId = nodeId,
+                    PeriodId = periodId,
+                    sumValue = highRank
+                });
+
+                Console.WriteLine($"Imported {nodeId}");
             }
 
             Console.WriteLine($"Imported {data.Count} rows");

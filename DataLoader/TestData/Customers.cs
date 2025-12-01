@@ -2,6 +2,8 @@
 using DataLoader.TestData.Models;
 using System;
 using System.Collections.Generic;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace DataLoader.TestData
 {
@@ -40,12 +42,24 @@ namespace DataLoader.TestData
 
 	internal class Customers
 	{
-		public static CustomerData GetRandomCustomer()
+		public static CustomerData GetRandomCustomer(IEnumerable<Customer>? existing)
         {
+			var hash = existing?.Select(x => x.EmailAddress).ToHashSet();
 			var customers = GetCustomerData();
 
 			var firstNameCustomer = customers.GetRandom();
 			var lastNameCustomer = customers.GetRandom();
+
+			if (hash != null)
+			{
+				bool inUse = hash.Contains(firstNameCustomer.Email);
+				while (inUse)
+				{
+					firstNameCustomer = customers.GetRandom();
+					firstNameCustomer.Email += GetRandomString(10);
+					inUse = hash.Contains(firstNameCustomer.Email);
+				}
+			}
 
 			return new CustomerData
 			{
@@ -56,7 +70,19 @@ namespace DataLoader.TestData
             };
 		}
 
-		public static CustomerData[] GetCustomerData()
+        private static string GetRandomString(int length)
+        {
+            const string chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            var bytes = RandomNumberGenerator.GetBytes(length);
+            var sb = new StringBuilder(length);
+            foreach (var b in bytes)
+            {
+                sb.Append(chars[b % chars.Length]);
+            }
+            return sb.ToString();
+        }
+
+        public static CustomerData[] GetCustomerData()
 		{
 			return new CustomerData[] {
 				new CustomerData{

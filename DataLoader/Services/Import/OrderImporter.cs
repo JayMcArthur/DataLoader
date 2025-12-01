@@ -1,5 +1,4 @@
 ﻿using DataLoader.Repositories;
-using DataLoader.Repositories.Models;
 using System.Globalization;
 
 namespace DataLoader.Services.Import
@@ -22,115 +21,47 @@ namespace DataLoader.Services.Import
 
             await Task.CompletedTask;
             var orderRows = _csvFileReader.ReadCsvFile(orderFile);
-            var lineItemRows = _csvFileReader.ReadCsvFile(lineItemFile);
+            //var lineItemRows = _csvFileReader.ReadCsvFile(lineItemFile);
 
-            var lineItems = lineItemRows.Select(x =>
+            foreach ( var row in orderRows )
             {
-                decimal.TryParse(x["CV"], out decimal cv);
-                decimal.TryParse(x["QV"], out decimal qv);
-                decimal.TryParse(x["price"], out decimal price);
-                decimal.TryParse(x["quantity"], out decimal quantity);
+                var orderId = row["OrderID"];
+                decimal.TryParse(row["EP1"], out decimal EP1);
+                decimal.TryParse(row["EP2"], out decimal EP2);
+                decimal.TryParse(row["EP3"], out decimal EP3);
+                decimal.TryParse(row["EPQV"], out decimal EPQV);
+                decimal.TryParse(row["FTQV"], out decimal FTQV);
+                decimal.TryParse(row["MEQV"], out decimal MEQV);
+                decimal.TryParse(row["ME"], out decimal ME);
+                decimal.TryParse(row["ASQV"], out decimal ASQV);
 
-                return new OrderLineItem
+                //NodeId,OrderID,EP1,EP2,EP3,EPQV,FTQV,MEQV,ME,ASQV
+                var order = await _orderRepository.GetOrder(orderId);
+
+                if (order.LineItems == null || order.LineItems[0].Volume == null)
                 {
-                    OrderId = x["orderId"],
-                    ProductId = x["productId"],
-                    Description = x["description"],
-                    Price = price,
-                    Quantity = quantity,
-                    Volume = new[]
-                    {
-                        new LineItemVolume{ VolumeId = "CV", Volume = cv },
-                        new LineItemVolume{ VolumeId = "QV", Volume = qv }
-                    }
-                };
-            }).GroupBy(x => x.OrderId).ToDictionary(x => x.Key, y => y.ToArray());
-
-            var orders = orderRows.Select(x =>
-            {
-                var orderDate = ReadDate(x["orderDate"], dateFormat, timeZoneId);
-                var invoiceDate = ReadDate(x["invoiceDate"], dateFormat, timeZoneId);
-                decimal.TryParse(x["subTotal"], out decimal subTotal);
-                //decimal.TryParse(x[""], out decimal discount);
-                decimal.TryParse(x["shipping"], out decimal shippingCost);
-                decimal.TryParse(x["tax"], out decimal taxCost);
-                //decimal.TryParse(x[""], out decimal taxRate);
-                decimal.TryParse(x["total"], out decimal total);
-
-                decimal.TryParse(x["totalCV"], out decimal totalCV);
-                decimal.TryParse(x["totalQV"], out decimal totalQV);
-
-                var ii = x["id"];
-                lineItems.TryGetValue(x["id"], out OrderLineItem[]? items);
-
-                if (items != null && items.Length > 0)
-                {
-                    if (items.Sum(x => x.Volume?.FirstOrDefault(y => y.VolumeId == "CV")?.Volume ?? 0) != totalCV || items.Sum(x => x.Volume?.FirstOrDefault(y => y.VolumeId == "QV")?.Volume ?? 0) != totalQV)
-                    {
-                        foreach (var item in items)
-                        {
-                            item.Volume = null;
-                        }
-
-                        items.First().Volume = new[] {
-                            new LineItemVolume{ VolumeId = "CV", Volume = totalCV },
-                            new LineItemVolume{ VolumeId = "QV", Volume = totalQV }
-                        };
-                    }
+                    int rr = 0;
                 }
 
-                if (!orderDate.HasValue) throw new ArgumentNullException(nameof(orderDate));
-
-                return new Order
+                if (order != null && order.LineItems != null && order.LineItems[0].Volume != null)
                 {
-                    Id = x["id"],
-                    CustomerId = x["customerId"],
-                    OrderDate = orderDate.Value,
-                    InvoiceDate = invoiceDate,
-                    OrderType = x["orderType"],
-                    SubTotal = subTotal,
-                    //Discount = discount,
-                    Shipping = shippingCost,
-                    Tax = taxCost,
-                    //TaxRate = taxRate,
-                    Total = total,
-                    Status = x["status"],
-                    Tracking = x["tracking"],
-                    //Notes = x["Notes"],
-                    ShipAddress = new ShipAddress
-                    {
-                        Line1 = x["shipline1"],
-                        Line2 = x["shipline2"],
-                        City = x["shipcity"],
-                        StateCode = x["shipstateCode"],
-                        Zip = x["shipzip"],
-                        CountryCode = x["countryCode"],
-                    },
+                    var volumes = order.LineItems[0].Volume.ToList();
+                    if (EP1 > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "EP1", Volume = EP1 });
+                    if (EP2 > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "EP2", Volume = EP2 });
+                    if (EP3 > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "EP3", Volume = EP3 });
+                    if (EPQV > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "EPQV", Volume = EPQV });
+                    if (FTQV > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "FTQV", Volume = FTQV });
+                    if (MEQV > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "MEQV", Volume = MEQV });
+                    if (ME > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "ME", Volume = ME });
+                    if (ASQV > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "ASQV", Volume = ASQV });
 
-                    LineItems = items
-                };
-            }).ToArray();
+                    order.LineItems[0].Volume = volumes.ToArray();
 
-            var maxInvoice = orders.MaxBy(x => x.InvoiceDate);
-            var maxOrder = orders.MaxBy(x => x.OrderDate);
-
-            List<object> ErrorList = new List<object>();
-
-            await Parallel.ForEachAsync(orders, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, async (order, cancellationToken) =>
-            {
-                try
-                {
                     await _orderRepository.InsertOrder(order);
-                    Console.WriteLine($"Imported {order.Id} {order.CustomerId}");
                 }
-                catch (Exception ex)
-                {
-                    lock (ErrorList) // Ensure thread safety when modifying the shared list
-                    {
-                        ErrorList.Add(new { msg = ex.Message, order = order });
-                    }
-                }
-            });
+            }
+
+            
 
             Console.WriteLine($"Imported {orderRows.Count} rows");
         }

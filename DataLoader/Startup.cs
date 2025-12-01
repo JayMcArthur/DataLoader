@@ -20,6 +20,7 @@ namespace DataLoader
             services.AddSingleton<TreeRepository>();
             services.AddSingleton<NodeRepository>();
             services.AddSingleton<CustomerService>();
+            services.AddSingleton<OrderService>();
             services.AddSingleton<VolumeService>();
             services.AddSingleton<SourceGroupRepository>();
             services.AddSingleton<OrderRepository>();
@@ -40,6 +41,7 @@ namespace DataLoader
             services.AddSingleton<InventoryImporter>();
             services.AddSingleton<AutoshipImporter>();
             services.AddSingleton<PaymentTokenImporter>();
+            services.AddSingleton<ImageUploader>();
         }
     }
 }

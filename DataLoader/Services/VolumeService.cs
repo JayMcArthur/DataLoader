@@ -1,4 +1,5 @@
 ﻿using DataLoader.Repositories;
+using DataLoader.Repositories.Models;
 using DataLoader.Sources;
 using DataLoader.TestData;
 
@@ -15,21 +16,21 @@ namespace DataLoader.Services
             _sourceGroupRepository = sourceGroupRepository;
         }
 
-        public async Task CreateVolume(string customerId, double amount, DateTime volumeDate)
+        public async Task CreateVolume(string customerId, string[] volumeKeys, double amount, DateTime volumeDate)
         {
             var sourceGroups = await GetSourceGroupVolume();
             var period = await _customerRepository.GetPeriod(volumeDate);
             if (period != null)
             {
                 var dates = DateRange(period.Begin, period.End);
-                await CreateCustomerVolume(customerId, sourceGroups, amount, dates);
+                await CreateCustomerVolume(customerId, volumeKeys, amount, dates);
             }
         }
 
-        public async Task CreateVolumes(int count, double amount, DateTime volumeDate)
+        public async Task CreateVolumes(int count, string[] volumeKeys, double amount, DateTime volumeDate)
         {
             List<string> customerIds = new List<string>();
-            var sourceGroups = await GetSourceGroupVolume();
+            
             var existing = await _customerRepository.GetCustomers();
             customerIds.AddRange(existing.Select(x => x.Id));
 
@@ -41,7 +42,7 @@ namespace DataLoader.Services
                 for (int i = 0; i < count; i++)
                 {
                     var customerId = customerIds.GetRandom("0");
-                    await CreateCustomerVolume(customerId, sourceGroups, amount, dates);
+                    await CreateCustomerVolume(customerId, volumeKeys, amount, dates);
 
                     Console.WriteLine($"Generating volume {i} of {count}: Id:{customerId} uplineId:{amount}");
                 }
@@ -72,7 +73,7 @@ namespace DataLoader.Services
             }
         }
 
-        private async Task<string[]> GetSourceGroupVolume()
+        public async Task<SourceGroup[]> GetSourceGroupVolume()
         {
             var allSourceGroups = await _sourceGroupRepository.GetSourceGroups();
             return allSourceGroups.Where(x =>
@@ -81,7 +82,7 @@ namespace DataLoader.Services
                 if (x.SourceType != "SumValue") return false;
                 if (x.DataType != "Decimal") return false;
                 return true;
-            }).Select(x => x.Id).ToArray();
+            }).ToArray();
         }
 
         private DateTime[] DateRange(DateTime begin, DateTime end)

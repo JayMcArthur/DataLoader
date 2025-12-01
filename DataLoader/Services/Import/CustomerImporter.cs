@@ -50,9 +50,9 @@ namespace DataLoader.Services.Import
                     Line1 = row["shipline1"],
                     Line2 = row["shipline2"],
                     City = row["shipcity"],
-                    StateCode = row["shipstateCode"],
+                    StateCode = row["shipstate"],
                     Zip = row["shipzip"],
-                    CountryCode = row["shipcountryCode"]
+                    CountryCode = row["shipcountrycode"]
                 };
 
                 var customerId = row["id"];
@@ -67,12 +67,13 @@ namespace DataLoader.Services.Import
                 customers.Add(new Customer
                 {
                     Id = customerId,
+                    ExternalIds = (new[] { row["externalId"] }).ToList(),
                     FirstName = row["firstName"],
                     LastName = row["lastName"],
                     CompanyName = row["companyName"],
                     EmailAddress = email,
                     Language = row["language"],
-                    WebAlias = row["webAlias"],
+                    WebAlias = !string.IsNullOrWhiteSpace(row["webAlias"]) ? row["webAlias"] : (customerId != "818628" ? customerId : null),
                     Status = (status * 10).ToString(),
                     BirthDate = birthDate,
                     SignupDate = signUpDate,
@@ -84,7 +85,21 @@ namespace DataLoader.Services.Import
 
             List<ErrorItem> ErrorList = new List<ErrorItem>();
 
+            foreach (var group in customers.GroupBy(x => x.EmailAddress)
+                .Where(g => !string.IsNullOrWhiteSpace(g.Key) && g.Count() > 1))
+            {
+                // Skip the first item (keep original email), apply change to the second
+                var duplicates = group.Skip(1).ToList();
+                foreach (var customer in duplicates)
+                {
+                    customer.EmailAddress = AppendValueToEmail(customer.EmailAddress, "1");
+                }
+            }
+
+            var duplicateWebAlias = customers.GroupBy(x => x.WebAlias).Where(x => x.Count() > 1);
+
             var duplicateEmails = customers.GroupBy(x => x.EmailAddress).Where(x => !string.IsNullOrWhiteSpace(x.Key) && x.Count() > 1);
+            var externalIdsDif = customers.Where(x => x.Id != x.ExternalIds.FirstOrDefault());
 
             await Parallel.ForEachAsync(customers, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, async (customer, cancellationToken) =>
             {
@@ -106,19 +121,19 @@ namespace DataLoader.Services.Import
             Console.WriteLine($"Imported {data.Count} rows");
         }
 
-        //public string AppendValueToEmail(string email, string value)
-        //{
-        //    if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(value)) return string.Empty;
+        public string AppendValueToEmail(string email, string value)
+        {
+            if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(value)) return string.Empty;
 
-        //    int count = _emailTracker.AddOrUpdate(email, 1, (_, existingCount) => existingCount + 1);
-        //    string indexPart = count > 1 ? count.ToString() : string.Empty;
+            int count = _emailTracker.AddOrUpdate(email, 1, (_, existingCount) => existingCount + 1);
+            string indexPart = count > 1 ? count.ToString() : string.Empty;
 
-        //    var parts = email.Split('@');
-        //    if (parts.Length != 2)
-        //        return $"{email}+{value}{indexPart}";
+            var parts = email.Split('@');
+            if (parts.Length != 2)
+                return $"{email}_{value}{indexPart}";
 
-        //    return $"{parts[0]}+{value}{indexPart}@{parts[1]}";
-        //}
+            return $"{parts[0]}_{value}{indexPart}@{parts[1]}";
+        }
 
         private DateTime? ReadDate(string date, string dateFormat, string timeZoneId)
         {
