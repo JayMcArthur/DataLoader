@@ -49,14 +49,23 @@ namespace DataLoader.Services
 
         public async Task CreateOrder(string customerId, DateTime invoiceDate, decimal? cv, decimal? qv)
         {
-            await _orderRepository.PostNewOrder(CreateRandomOrder(customerId, invoiceDate, cv, qv));
+            List<(string Key, decimal Volume)> volumes = new();
+            volumes.Add(("CV", cv.HasValue ? cv.Value : decimal.MinValue));
+            volumes.Add(("QV", qv.HasValue ? qv.Value : decimal.MinValue));
+
+            await _orderRepository.PostNewOrder(CreateRandomOrder(customerId, invoiceDate, volumes));
+        }
+
+        public async Task CreateOrder(string customerId, DateTime invoiceDate, IEnumerable<(string Key, decimal Volume)>? volumes)
+        {
+            await _orderRepository.PostNewOrder(CreateRandomOrder(customerId, invoiceDate, volumes));
         }
 
 
-        public static Order CreateRandomOrder(string customerId, DateTime invoiceDate, decimal? cv, decimal? qv)
+        public static Order CreateRandomOrder(string customerId, DateTime invoiceDate, IEnumerable<(string Key, decimal Volume)>? volumes)
         {
-            int lineItemCount = cv.HasValue || qv.HasValue ? 1 : _random.Next(1, 4);
-            var lineItems = GenerateLineItems(lineItemCount, cv, qv);
+            int lineItemCount = volumes?.Count() > 0 ? 1 : _random.Next(1, 4);
+            var lineItems = GenerateLineItems(lineItemCount, volumes);
 
             var subTotal = 0m;
             foreach (var item in lineItems)
@@ -88,7 +97,7 @@ namespace DataLoader.Services
             };
         }
 
-        private static OrderLineItem[] GenerateLineItems(int count, decimal? cv, decimal? qv)
+        private static OrderLineItem[] GenerateLineItems(int count, IEnumerable<(string Key, decimal Volume)>? volumes)
         {
             var items = new List<OrderLineItem>();
             for (int i = 0; i < count; i++)
@@ -96,25 +105,20 @@ namespace DataLoader.Services
                 var price = Math.Round(RandomDecimal(10, 100), 2);
                 var quantity = _random.Next(1, 4);
                 var volume = Math.Round(price * quantity * 0.8m, 2);
+
+                var volumeItems = volumes?.Select(x => new LineItemVolume
+                {
+                    VolumeId = x.Key,
+                    Volume = x.Volume == decimal.MinValue ? volume : x.Volume,
+                }) ?? [];
+
                 items.Add(new OrderLineItem
                 {
                     ProductId = $"P{_random.Next(1000, 9999)}",
                     Description = $"Test Product {_random.Next(1, 100)}",
                     Price = price,
                     Quantity = quantity,
-                    Volume = new[]
-                    {
-                        new LineItemVolume
-                        {
-                            VolumeId = "QV",
-                            Volume = qv.HasValue ? qv.Value : volume
-                        },
-                        new LineItemVolume
-                        {
-                            VolumeId = "CV",
-                            Volume = cv.HasValue ? cv.Value : volume
-                        }
-                    }
+                    Volume = volumeItems.ToArray()
                 });
             }
 

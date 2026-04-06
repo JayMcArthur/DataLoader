@@ -2,7 +2,8 @@
 {
     internal class User
     {
-        public AuthToken AuthToken { get; set; }
+        public string Username { get; set; } = string.Empty;
+        public AuthToken AuthToken { get; set; } = new();
     }
 
     internal class AuthToken

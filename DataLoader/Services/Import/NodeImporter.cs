@@ -1,79 +1,127 @@
-﻿using DataLoader.Repositories;
+﻿using DataLoader.Importer;
+using DataLoader.Repositories;
+using DataLoader.Repositories.Models;
+using DataLoader.TestData;
+using Importer.Contracts;
 
 namespace DataLoader.Services.Import
 {
     internal class NodeImporter
     {
-        private readonly TreeRepository _treeRepository;
         private readonly NodeRepository _nodeRepository;
         private readonly CSVFileReader _csvFileReader;
 
-        public NodeImporter(TreeRepository treeRepository, NodeRepository nodeRepository, CSVFileReader sVFileReader)
+        public NodeImporter(NodeRepository nodeRepository, CSVFileReader sVFileReader)
         {
-            _treeRepository = treeRepository;
             _nodeRepository = nodeRepository;
             _csvFileReader = sVFileReader;
         }
 
-        public async Task ImpmortNodes(string filePath)
+        public async Task ImportEnrollmentNodes(string basePath, long treeId, IImportProfile<EnrollmentTreeImportRequest>? nodeProfile)
         {
-            //recordnumber,last_modified,DistributorID,UplineID,UplineLeg,TreeIndex,UplineIndex
-
-            var trees = await _treeRepository.GetTrees();
-            Console.WriteLine("Please select a tree to import into");
-
-            foreach (var t in trees)
+            if (nodeProfile == null) 
             {
-                Console.WriteLine($"{t.Id} - {t.Name}");
+                Console.WriteLine($"No node map to import.");
+                return;
             }
 
-            var treeIdString = Console.ReadLine();
-            long.TryParse(treeIdString, out long treeId);
+            await ImportNodes(basePath, nodeProfile.SourceFile, treeId, row =>
+            {
+                var map = nodeProfile.Map(row);
+                if (map == null) return null;
 
-            var data = _csvFileReader.ReadCsvFile(filePath);
+                return new Node
+                {
+                    NodeId = map.NodeId,
+                    UplineId = map.UplineId,
+                    UplineLeg = map.NodeId,
+                    EffectiveDate = map.EffectiveDate
+                };
+            });
+        }
+
+        public async Task ImpmortPlacementNodes(string basePath, long treeId, IImportProfile<PlacementTreeImportRequest>? nodeProfile)
+        {
+            if (nodeProfile == null)
+            {
+                Console.WriteLine($"No node map to import.");
+                return;
+            }
+
+            await ImportNodes(basePath, nodeProfile.SourceFile, treeId, row =>
+            {
+                var map = nodeProfile.Map(row);
+                if (map == null) return null;
+
+                return new Node
+                {
+                    NodeId = map.NodeId,
+                    UplineId = map.UplineId,
+                    UplineLeg = map.NodeId,
+                    EffectiveDate = map.EffectiveDate
+                };
+            });
+        }
+
+        private async Task ImportNodes(string basePath, string filePath, long treeId, Func<Dictionary<string,string>, Node?> map)
+        {
+            Console.WriteLine($"Reading Customer Headers");
+            var data = _csvFileReader.ReadCsvFile(Path.Combine(basePath, filePath));
 
             List<Node> nodes = new List<Node>();
-            List<string> badIds = new List<string>();
 
             foreach (var row in data)
             {
-                row.TryGetValue("nodeId", out string? nodeId);
-                row.TryGetValue("uplineId", out string? uplineId);
-                if (nodeId != null && uplineId != null)
+                var mappedNode = map(row);
+                if (mappedNode == null)
                 {
-                    var leg = nodeId;
+                    Console.WriteLine($"Skipping row with missing node data: {string.Join(", ", row.Values)}");
+                    continue;
+                }
 
-                    if (treeId > 0 && uplineId != null)
+                if (mappedNode.NodeId != null && mappedNode.UplineId != null)
+                {
+                    if (treeId > 0)
                     {
-                        nodes.Add(new Node { NodeId = nodeId, UplineId = uplineId, UplineLeg = leg });
-                        Console.WriteLine($"Imported {nodeId} {uplineId}");
-                    }
-                    else
-                    {
-                        badIds.Add(nodeId);
+                        nodes.Add(mappedNode);
+                        Console.WriteLine($"Loaded {mappedNode.NodeId} {mappedNode.UplineId}");
                     }
                 }
             }
 
-            List<object> ErrorList = new List<object>();
+            var ErrorList = new List<ErrorItem>();
+            var successCount = 0;
 
-            foreach (var node in nodes)
+            await Parallel.ForEachAsync(nodes, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, async (node, cancellationToken) =>
             {
                 try
                 {
-                    await _nodeRepository.InsertNode(treeId, node.NodeId, node.UplineId, node.UplineLeg);
+                    await _nodeRepository.InsertNode(treeId, node.NodeId, node.UplineId, node.UplineLeg, node.EffectiveDate);
+                    successCount++;
                     Console.WriteLine($"Imported {node.NodeId} {node.UplineId}");
                 }
                 catch (Exception ex)
                 {
                     lock (ErrorList) // Ensure thread safety when modifying the shared list
                     {
-                        ErrorList.Add(new { msg = ex.Message, node = node });
+                        ErrorList.Add(new ErrorItem { Message = ex.Message, Items = [node] });
                     }
                 }
+            });
+
+            var errors = ErrorList.GroupBy(x => x.Message).ToDictionary(x => x.Key, x => x.ToList());
+            foreach (var error in errors)
+            {
+                Console.WriteLine($"Error during import: {error.Key} count: {error.Value.Count}");
             }
 
-            Console.WriteLine($"Imported {data.Count} rows");
+            Console.WriteLine($"Imported {successCount} rows");
+        }
+
+        private class ErrorItem
+        {
+            public string Message { get; set; } = "";
+            public Node[] Items { get; set; } = [];
         }
     }
 }

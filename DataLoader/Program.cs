@@ -5,7 +5,6 @@ using DataLoader.Services;
 using DataLoader.Services.Import;
 using Microsoft.Extensions.DependencyInjection;
 using System.Collections.Concurrent;
-using System.Runtime.InteropServices;
 using System.Web;
 
 namespace DataLoader
@@ -15,13 +14,12 @@ namespace DataLoader
         public static async Task Main(string[] args)
         {
             User user = await Login();
-            //User user = await GetTokenUser("3t05LPhs1L76qaKK50sp9TDXntpP3WGcsVNKJDFv0dpY");
             var services = new ServiceCollection();
             Startup.ConfigureServices(services, user.AuthToken.Token);
             using var serviceProvider = services.BuildServiceProvider();
 
             Console.Clear();
-            Console.WriteLine($"Connected to '{user.AuthToken.EnvironmentId} - {user.AuthToken.EnvironmentName}'");
+            Console.WriteLine($"Connected as '{user.Username}' to '{user.AuthToken.EnvironmentId} - {user.AuthToken.EnvironmentName}'");
 
             while (true)
             {
@@ -302,52 +300,17 @@ namespace DataLoader
             }
         }
 
-        private static async Task<User?> GetTokenUser(string token)
+        private static async Task<User> Login(string? defUsername = null, string? defPassword = null, string? defEnv = null)
         {
-            AuthToken? authToken = null;
-            try
-            {
-                var client = new Client("");
-                authToken = await client.Get<AuthToken>($"/Authentication/token/{token}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine();
-                Console.WriteLine(ex.Message);
-            }
-
-            if (authToken == null) return null;
-
-            var envClient = new Client(token);
-            var environments = await envClient.Get<EnvironmentItem[]>($"/Authentication/token/{authToken.Token}/Environments");
-            var selEnv = environments.FirstOrDefault(x => x.Id == authToken.EnvironmentId);
-            authToken.EnvironmentName = selEnv.Name;
-
-            return new User
-            {
-                AuthToken = authToken
-            };
-        }
-
-        private static async Task<User> Login(string? un = null)
-        {
-            User user = null;
+            User? user = null;
             Console.WriteLine("Welcome to the data Loader. Please login.");
             while (user == null)
             {
-                var username = un;
+                Console.Write("Username:");
+                var username = defUsername ?? Console.ReadLine();
 
-                if (string.IsNullOrWhiteSpace(username))
-                { 
-                    Console.Write("Username:");
-                    username = Console.ReadLine();
-                }
-                else
-                {
-                    Console.WriteLine($"Username: {username}");
-                }
                 Console.Write("Password:");
-                var password = ReadPassword();
+                var password = defPassword ?? ReadPassword();
 
                 try
                 {
@@ -359,7 +322,6 @@ namespace DataLoader
                     Console.WriteLine();
                     Console.WriteLine(ex.Message);
                 }
-
             }
 
             var envClient = new Client(user.AuthToken.Token);
@@ -375,7 +337,7 @@ namespace DataLoader
                     Console.WriteLine($"{item.Id} - {item.Name}");
                 }
 
-                var envIndex = Console.ReadLine();
+                var envIndex = defEnv ?? Console.ReadLine();
                 var env = environments.FirstOrDefault(x => x.Id.ToString() == envIndex);
                 if (env != null)
                 {
@@ -384,7 +346,7 @@ namespace DataLoader
             }
 
             var selEnv = environments.FirstOrDefault(x => x.Id == user.AuthToken.EnvironmentId);
-            user.AuthToken.EnvironmentName = selEnv.Name;
+            user.AuthToken.EnvironmentName = selEnv?.Name;
 
             return user;
         }

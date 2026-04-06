@@ -16,6 +16,33 @@ namespace DataLoader.Services
             _orderService = orderService;
         }
 
+        public async Task CreateCustomer(string? Id, string? firstName, string? lastName, int customerType, string uplineId, IEnumerable<(string Key, decimal Volume)>? volumes, ConcurrentDictionary<string, Customer> customerIds)
+        {
+            if (customerIds.Count == 0)
+            {
+                var existing = await _customerRepository.GetCustomers();
+                foreach (var item in existing)
+                {
+                    customerIds.TryAdd(item.Id ?? string.Empty, item);
+                }
+            }
+
+            var customer = Customers.GetRandomCustomer(customerIds.Values.ToList()).ToCustomer(date: DateTime.UtcNow);
+            customer.CustomerType = customerType;
+            if (!string.IsNullOrWhiteSpace(Id)) customer.Id = Id;
+            if (!string.IsNullOrWhiteSpace(firstName)) customer.FirstName = firstName;
+            if (!string.IsNullOrWhiteSpace(lastName)) customer.LastName = lastName;
+            var newCust = await _customerRepository.CreateCustomer(customer, uplineId);
+
+            if (volumes != null)
+            {
+                var filteredVols = volumes.Where(x => x.Volume != 0);
+                await _orderService.CreateOrder(newCust.Id ?? string.Empty, DateTime.UtcNow, filteredVols);
+            }
+
+            customerIds.TryAdd(newCust.Id ?? string.Empty, newCust);
+        }
+
         public async Task CreateCustomers(int count, int customerType, string? uplineId, bool stack, DateTime date, (DateTime Date, decimal Volume)[]? volumes, ConcurrentDictionary<string, Customer> customerIds)
         {
             //List<string> customerIds = new List<string>();

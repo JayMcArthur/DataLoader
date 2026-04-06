@@ -1,4 +1,7 @@
-﻿namespace DataLoader.Services.Import
+﻿using DataLoader.Repositories;
+using Importer.Contracts;
+
+namespace DataLoader.Services.Import
 {
     internal class ImportManager
     {
@@ -11,10 +14,11 @@
         private readonly SourceImporter _sourceImporter;
         private readonly AutoshipImporter _autoshipImporter;
         private readonly PaymentTokenImporter _paymentTokenImporter;
+        private readonly TreeRepository _treeRepository;
 
         public ImportManager(NodeImporter nodeImporter, OrderImporter orderImporter, CustomerImporter customerImporter, InventoryImporter inventoryImporter,
             HistoricalValueImporter historicalValueImporter, SourceImporter sourceImporter, HistoricalBonusImporter historicalBonusImporter, 
-            AutoshipImporter autoshipImporter, PaymentTokenImporter paymentTokenImporter)
+            AutoshipImporter autoshipImporter, PaymentTokenImporter paymentTokenImporter, TreeRepository treeRepository)
         {
             _nodeImporter = nodeImporter;
             _orderImporter = orderImporter;
@@ -25,6 +29,7 @@
             _historicalBonusImporter = historicalBonusImporter;
             _autoshipImporter = autoshipImporter;
             _paymentTokenImporter = paymentTokenImporter;
+            _treeRepository = treeRepository;
         }
 
         public async Task BeginImport()
@@ -45,24 +50,47 @@
 
             if (input == "n")
             {
-                string? filePath = GetFilePathFromDialog("Node");
-                if (string.IsNullOrWhiteSpace(filePath))
+                if (GetCsxFilePathFromDialog(out string dirPath, out string csxPath))
                 {
-                    Console.WriteLine("No file selected.");
-                    return;
-                }
+                    Console.WriteLine("What tree are you importing?");
+                    Console.WriteLine(" (E)nrollment Tree");
+                    Console.WriteLine(" (P)lacement Tree");
+                    Console.WriteLine(" (B)inary Tree");
+                    var treeTypeString = Console.ReadLine()?.ToLower() ?? string.Empty; ;
 
-                await _nodeImporter.ImpmortNodes(filePath.Trim('"'));
+                    var trees = await _treeRepository.GetTrees();
+                    Console.WriteLine("Please select a tree to import into");
+
+                    foreach (var t in trees)
+                    {
+                        Console.WriteLine($"{t.Id} - {t.Name}");
+                    }
+
+                    var treeIdString = Console.ReadLine();
+                    long.TryParse(treeIdString, out long treeId);
+                    
+                    if (treeTypeString == "e")
+                    {
+                        var headerProfile = await ScriptLoader.LoadProfileAsync<EnrollmentTreeImportRequest>(csxPath);
+                        await _nodeImporter.ImportEnrollmentNodes(dirPath, treeId, headerProfile);
+                    }
+                    
+                    if (treeTypeString == "p")
+                    {
+                        var headerProfile = await ScriptLoader.LoadProfileAsync<PlacementTreeImportRequest>(csxPath);
+                        await _nodeImporter.ImpmortPlacementNodes(dirPath, treeId, headerProfile);
+                    }
+                }
             }
             else if (input == "a")
             {
-                string? orderPath = GetFilePathFromDialog("Autoships");
+                string? orderPath = GetFilePathFromDialog();
                 if (string.IsNullOrWhiteSpace(orderPath))
                 {
                     Console.WriteLine("No file selected.");
                     return;
                 }
-                string? lineItemPath = GetFilePathFromDialog("Line Items");
+                string? lineItemPath = GetFilePathFromDialog();
                 if (string.IsNullOrWhiteSpace(lineItemPath))
                 {
                     Console.WriteLine("No file selected.");
@@ -74,36 +102,25 @@
             }
             else if (input == "o")
             {
-                string? orderPath = GetFilePathFromDialog("Orders");
-                if (string.IsNullOrWhiteSpace(orderPath))
+                if (GetCsxFilePathFromDialog(out string dirPath, out string csxPath))
                 {
-                    Console.WriteLine("No file selected.");
-                    return;
+                    var headerProfile = await ScriptLoader.LoadProfileAsync<OrderHeaderImportRequest>(csxPath);
+                    var lineItemProfile = await ScriptLoader.LoadProfileAsync<OrderLineItemImportRequest>(csxPath);
+                    var paymentsProfile = await ScriptLoader.LoadProfileAsync<OrderPaymentImportRequest>(csxPath);
+                    await _orderImporter.ImportOrders(dirPath, headerProfile, lineItemProfile, paymentsProfile);
                 }
-                string? lineItemPath = GetFilePathFromDialog("Line Items");
-                if (string.IsNullOrWhiteSpace(lineItemPath))
-                {
-                    Console.WriteLine("No file selected.");
-                    return;
-                }
-
-
-                await _orderImporter.ImportOrders(orderPath.Trim('"'), lineItemPath.Trim('"'));
             }
             else if (input == "c")
             {
-                string? customerPath = GetFilePathFromDialog("Customers");
-                if (string.IsNullOrWhiteSpace(customerPath))
+                if (GetCsxFilePathFromDialog(out string dirPath, out string csxPath))
                 {
-                    Console.WriteLine("No file selected.");
-                    return;
+                    var customerProfile = await ScriptLoader.LoadProfileAsync<CustomersImportRequest>(csxPath);
+                    await _customerImporter.ImpmortCustomers(dirPath, customerProfile);
                 }
-
-                await _customerImporter.ImpmortCustomers(customerPath.Trim('"'));
             }
             else if (input == "t")
             {
-                string? customerPath = GetFilePathFromDialog("Payment Tokens");
+                string? customerPath = GetFilePathFromDialog();
                 if (string.IsNullOrWhiteSpace(customerPath))
                 {
                     Console.WriteLine("No file selected.");
@@ -114,7 +131,7 @@
             }
             else if (input == "v")
             {
-                string? customerPath = GetFilePathFromDialog("Historical Values");
+                string? customerPath = GetFilePathFromDialog();
                 if (string.IsNullOrWhiteSpace(customerPath))
                 {
                     Console.WriteLine("No file selected.");
@@ -125,7 +142,7 @@
             }
             else if (input == "b")
             {
-                string? customerPath = GetFilePathFromDialog("Historical Bonues");
+                string? customerPath = GetFilePathFromDialog();
                 if (string.IsNullOrWhiteSpace(customerPath))
                 {
                     Console.WriteLine("No file selected.");
@@ -136,13 +153,13 @@
             }
             else if (input == "i")
             {
-                string? productPath = GetFilePathFromDialog("Products");
+                string? productPath = GetFilePathFromDialog();
                 if (string.IsNullOrWhiteSpace(productPath))
                 {
                     Console.WriteLine("No file selected.");
                     return;
                 }
-                string? pricePath = GetFilePathFromDialog("Prices");
+                string? pricePath = GetFilePathFromDialog();
                 if (string.IsNullOrWhiteSpace(pricePath))
                 {
                     Console.WriteLine("No file selected.");
@@ -153,7 +170,7 @@
             }
             else if (input == "s")
             {
-                string? sourcePath = GetFilePathFromDialog("Sources");
+                string? sourcePath = GetFilePathFromDialog();
                 if (string.IsNullOrWhiteSpace(sourcePath))
                 {
                     Console.WriteLine("No file selected.");
@@ -168,10 +185,37 @@
             }
         }
 
-        private static string? GetFilePathFromDialog(string file)
+        private static string? GetFilePathFromDialog()
         {
-            Console.WriteLine($"Enter path to CSV file for {file}");
-            return Console.ReadLine();
+            Console.WriteLine($"Enter path to .csx file");
+            return Console.ReadLine()?.Trim('"');
         }
+
+        private static bool GetCsxFilePathFromDialog(out string dirPath, out string csxPath)
+        {
+            Console.WriteLine($"Enter path to .csx file");
+            var path = Console.ReadLine()?.Trim('"');
+
+            dirPath = string.Empty;
+            csxPath = string.Empty;
+
+            if (!File.Exists(path))
+            {
+                Console.WriteLine("No file selected.");
+                return false;
+            }
+
+            var dirP = Path.GetDirectoryName(path);
+            if (dirP == null || !Directory.Exists(dirP))
+            {
+                Console.WriteLine("No file selected.");
+                return false;
+            }
+
+            dirPath = dirP;
+            csxPath = path;
+            return true;
+        }
+
     }
 }

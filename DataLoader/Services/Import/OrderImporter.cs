@@ -1,5 +1,9 @@
-﻿using DataLoader.Repositories;
-using System.Globalization;
+﻿using DataLoader.Importer;
+using DataLoader.Repositories;
+using DataLoader.Repositories.Models;
+using DataLoader.TestData;
+using Importer.Contracts;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace DataLoader.Services.Import
 {
@@ -14,76 +18,122 @@ namespace DataLoader.Services.Import
             _csvFileReader = sVFileReader;
         }
 
-        public async Task ImportOrders(string orderFile, string lineItemFile)
+        public async Task ImportOrders(string basePath, IImportProfile<OrderHeaderImportRequest>? headerProfile,
+            IImportProfile<OrderLineItemImportRequest>? lineItemProfile, IImportProfile<OrderPaymentImportRequest>? paymentProfile)
         {
-            var timeZoneId = "Mountain Standard Time";
-            var dateFormat = "M/d/yyyy H:mm";
-
-            await Task.CompletedTask;
-            var orderRows = _csvFileReader.ReadCsvFile(orderFile);
-            //var lineItemRows = _csvFileReader.ReadCsvFile(lineItemFile);
-
-            foreach ( var row in orderRows )
+            if (headerProfile == null || lineItemProfile == null)
             {
-                var orderId = row["OrderID"];
-                decimal.TryParse(row["EP1"], out decimal EP1);
-                decimal.TryParse(row["EP2"], out decimal EP2);
-                decimal.TryParse(row["EP3"], out decimal EP3);
-                decimal.TryParse(row["EPQV"], out decimal EPQV);
-                decimal.TryParse(row["FTQV"], out decimal FTQV);
-                decimal.TryParse(row["MEQV"], out decimal MEQV);
-                decimal.TryParse(row["ME"], out decimal ME);
-                decimal.TryParse(row["ASQV"], out decimal ASQV);
-
-                //NodeId,OrderID,EP1,EP2,EP3,EPQV,FTQV,MEQV,ME,ASQV
-                var order = await _orderRepository.GetOrder(orderId);
-
-                if (order.LineItems == null || order.LineItems[0].Volume == null)
-                {
-                    int rr = 0;
-                }
-
-                if (order != null && order.LineItems != null && order.LineItems[0].Volume != null)
-                {
-                    var volumes = order.LineItems[0].Volume.ToList();
-                    if (EP1 > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "EP1", Volume = EP1 });
-                    if (EP2 > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "EP2", Volume = EP2 });
-                    if (EP3 > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "EP3", Volume = EP3 });
-                    if (EPQV > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "EPQV", Volume = EPQV });
-                    if (FTQV > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "FTQV", Volume = FTQV });
-                    if (MEQV > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "MEQV", Volume = MEQV });
-                    if (ME > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "ME", Volume = ME });
-                    if (ASQV > 0) volumes.Add(new Repositories.Models.LineItemVolume { VolumeId = "ASQV", Volume = ASQV });
-
-                    order.LineItems[0].Volume = volumes.ToArray();
-
-                    await _orderRepository.InsertOrder(order);
-                }
+                Console.WriteLine($"No order map to import.");
+                return;
             }
 
-            
+            Console.WriteLine($"Reading Order Headers");
+            var orderRows = _csvFileReader.ReadCsvFile(Path.Combine(basePath, headerProfile.SourceFile));
+            Console.WriteLine($"Reading Order LineItems");
+            var lineItemRows = _csvFileReader.ReadCsvFile(Path.Combine(basePath, lineItemProfile.SourceFile));
+            Console.WriteLine($"Reading Order Payments");
+            var paymentRows = new List<Dictionary<string, string>>();
+
+            if (paymentProfile != null) paymentRows = _csvFileReader.ReadCsvFile(Path.Combine(basePath, paymentProfile.SourceFile));
+
+            var lineItemsByOrderId = lineItemRows.Select(x => lineItemProfile.Map(x))
+                .GroupBy(x => x.OrderId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            var paymentsByOrderId = paymentRows.Select(x => paymentProfile?.Map(x))
+                .GroupBy(x => x.OrderId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            var orders = new List<Order>();
+            Console.WriteLine($"Building orders");
+            foreach (var row in orderRows)
+            {
+                var orderHeader = headerProfile.Map(row);
+                if (orderHeader == null)
+                {
+                    Console.WriteLine($"Skipping row with missing order header data: {string.Join(", ", row.Values)}");
+                    continue;
+                }
+
+                var lineItems = lineItemsByOrderId.ContainsKey(orderHeader.OrderId)
+                        ? lineItemsByOrderId[orderHeader.OrderId].Select(li => new OrderLineItem
+                        {
+                            OrderId = orderHeader.OrderId,
+                            ProductId = li.ProductId,
+                            Quantity = li.Quantity,
+                            Description = li.Description ?? string.Empty,
+                            Price = li.UnitPrice,
+                            Volume = li.Volume?.Select(v => new LineItemVolume
+                            {
+                                VolumeId = v.VolumeId,
+                                Volume = v.Volume
+                            }).ToArray()
+                        }).ToArray()
+                        : null;
+
+                var shipAddress = !string.IsNullOrWhiteSpace(orderHeader.ShipLine1) ? new ShipAddress
+                {
+                    Line1 = orderHeader.ShipLine1,
+                    Line2 = orderHeader.ShipLine2 ?? "",
+                    City = orderHeader.ShipCity ?? "",
+                    StateCode = orderHeader.ShipStateCode ?? "",
+                    Zip = orderHeader.ShipZip ?? "",
+                    CountryCode = orderHeader.ShipCountryCode ?? ""
+                } : null;
+
+                orders.Add(new Order
+                {
+                    Id = orderHeader.OrderId,
+                    ShipAddress = shipAddress,
+                    CustomerId = orderHeader.CustomerId,
+                    Discount = orderHeader.Discount.HasValue ? orderHeader.Discount.Value : 0,
+                    OrderDate = orderHeader.OrderDate ?? DateTime.UtcNow,
+                    InvoiceDate = orderHeader.InvoiceDate,
+                    OrderType = orderHeader.OrderType,
+                    Shipping = orderHeader.Shipping ?? 0,
+                    Tax = orderHeader.Tax ?? 0,
+                    Total = orderHeader.Total ?? 0,
+                    Status = orderHeader.Status,
+                    Tracking = orderHeader.Tracking,
+                    LineItems = lineItems,
+                    SubTotal = orderHeader.SubTotal ?? lineItems?.Sum(li => li.Price * li.Quantity) ?? 0,
+                    TaxRate = orderHeader.Tax.HasValue && orderHeader.SubTotal.HasValue && orderHeader.SubTotal.Value > 0
+                        ? orderHeader.Tax.Value / orderHeader.SubTotal.Value
+                        : 0
+                });
+            }
+
+            List<ErrorItem> ErrorList = new List<ErrorItem>();
+
+            await Parallel.ForEachAsync(orders, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, async (order, cancellationToken) =>
+            {
+                try
+                {
+                    await _orderRepository.InsertOrder(order);
+                    Console.WriteLine($"Imported {order.Id}");
+                }
+                catch (Exception ex)
+                {
+                    lock (ErrorList) // Ensure thread safety when modifying the shared list
+                    {
+                        ErrorList.Add(new ErrorItem { Message = ex.Message, Items = [order] });
+                    }
+                }
+            });
+
+            var errors = ErrorList.GroupBy(x => x.Message).ToDictionary(x => x.Key, x => x.ToList());
+            foreach (var error in errors)
+            {
+                Console.WriteLine($"Error during import: {error.Key} count: {error.Value.Count}");
+            }
 
             Console.WriteLine($"Imported {orderRows.Count} rows");
         }
 
-        private DateTime? ReadDate(string date, string dateFormat, string timeZoneId)
+        private class ErrorItem
         {
-            if (string.IsNullOrEmpty(date)) return null;
-
-            if (DateTime.TryParseExact(date, dateFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime orderDate))
-            {
-                // Specify the mountain time zone
-                TimeZoneInfo mountainTimeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
-
-                // Convert to UTC
-                DateTime utcOrderDate = TimeZoneInfo.ConvertTimeToUtc(orderDate, mountainTimeZone);
-
-                return utcOrderDate;
-            }
-            else
-            {
-                throw new Exception("Failed to parse order date.");
-            }
+            public string Message { get; set; } = "";
+            public Order[] Items { get; set; } = [];
         }
     }
 }
